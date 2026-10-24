@@ -416,7 +416,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     )
 
     try:
-        # Всегда отправляем новое сообщение, чтобы и вы, и собеседник видели карточку и кнопки
+        # Отправляем карточку оффера в чат
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
@@ -425,16 +425,6 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        
-        # Удаляем исходное сообщение с командой /ar
-        if biz_conn_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
-            )
-        else:
-            await message.delete()
-            
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
