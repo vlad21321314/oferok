@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import uuid
 import aiohttp
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, F
@@ -10,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    LinkPreviewOptions
+    LinkPreviewOptions, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 )
 
 # Токен вашего бота
@@ -119,7 +120,14 @@ def parse_query_and_price(raw_text: str) -> tuple[str, str, str]:
         return slug, f"{star_val} ⭐️ Звёзд", f"{star_val} ⭐️"
 
     only_num = re.search(r"(\d+(?:[.,]\d+)?)", price_str)
-    val = only_num.group(1) if only_num else "2 727"
+    if only_num:
+        raw_num = only_num.group(1)
+        if raw_num.isdigit():
+            val = f"{int(raw_num):,}".replace(",", " ")
+        else:
+            val = raw_num
+    else:
+        val = "2 727"
     return slug, f"{val} ⭐️ Звёзд", f"{val} ⭐️"
 
 async def fetch_real_nft_data(slug: str) -> dict:
@@ -180,7 +188,6 @@ def get_step1_kb() -> InlineKeyboardMarkup:
     ])
 
 def get_step2_kb() -> InlineKeyboardMarkup:
-    # Динамически подгружаем ссылку из файла конфигурации
     config = load_config()
     target_url = config.get("nft_url", "https://t.me/GiftReseII")
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -200,8 +207,9 @@ async def cmd_start(message: Message):
         "🎁 <b>Генератор интерактивных офферов NFT</b>\n\n"
         f"🔑 Ваш Telegram ID: <code>{uid}</code>\n"
         f"{status_text}\n\n"
-        "⚙️ <b>Команды:</b>\n"
-        "• <code>/ar [ссылка] [цена]</code> — отправить оффер\n"
+        "⚙️ <b>Способы отправки:</b>\n"
+        "• <code>/ar [ссылка] [цена]</code> — отправить оффер (команда удалится автоматически)\n"
+        "• <code>@имя_бота [ссылка] [цена]</code> — отправка через инлайн без команд в чате\n"
     )
     if uid in SUPER_ADMIN_IDS:
         text += "• <code>/admins</code> — админ-панель"
@@ -393,12 +401,16 @@ async def process_broadcast(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
 
+# =====================================================================
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ: СНАЧАЛА УДАЛЯЕТ КОМАНДУ /ar, ЗАТЕМ ШЛЕТ КАРТОЧКУ
+# =====================================================================
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
     register_user(user_id)
     
     if not is_authorized(user_id):
-        await message.answer("❌ У вас нет доступа к использованию этого бота.")
+        if not is_business:
+            await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
 
     text = message.text or ""
@@ -407,6 +419,20 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
+
+    # 1. Мгновенно удаляем сообщение с командой /ar, чтобы не было видно команды и значка "изменено"
+    try:
+        if biz_conn_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_conn_id,
+                message_ids=[message.message_id]
+            )
+        else:
+            await message.delete()
+    except Exception as e:
+        print(f"Не удалось удалить исходную команду: {e}")
+
+    # 2. Парсим данные подарка и отправляем совершенно новое чистое сообщение
     data = await fetch_real_nft_data(slug)
 
     preview_opts = LinkPreviewOptions(
@@ -415,21 +441,6 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         prefer_large_media=True,
         show_above_text=True
     )
-
-    if biz_conn_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=message.message_id,
-                business_connection_id=biz_conn_id,
-                text=format_parsed_card(data, price_display),
-                parse_mode="HTML",
-                link_preview_options=preview_opts,
-                reply_markup=get_step1_kb()
-            )
-            return
-        except Exception:
-            pass
 
     try:
         await bot.send_message(
@@ -440,13 +451,6 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        if biz_conn_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
-            )
-        else:
-            await message.delete()
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
@@ -457,6 +461,42 @@ async def handle_regular_ar(message: Message):
 @dp.business_message(F.text.startswith("/ar"))
 async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
+
+# =====================================================================
+# ДОБАВЛЕН INLINE-РЕЖИМ (ЧТОБЫ ОТПРАВЛЯТЬ ВООБЩЕ БЕЗ КОМАНДЫ /ar В ЧАТЕ)
+# =====================================================================
+@dp.inline_query()
+async def handle_inline_ar(inline_query: InlineQuery):
+    user_id = inline_query.from_user.id
+    register_user(user_id)
+    if not is_authorized(user_id):
+        return
+
+    raw_args = inline_query.query.strip() or "MirageLamp-44307 2727 stars"
+    slug, price_display, short_price = parse_query_and_price(raw_args)
+    data = await fetch_real_nft_data(slug)
+
+    preview_opts = LinkPreviewOptions(
+        is_disabled=False,
+        url=data["url"],
+        prefer_large_media=True,
+        show_above_text=True
+    )
+
+    result = InlineQueryResultArticle(
+        id=str(uuid.uuid4()),
+        title=f"🎁 {data['name']} — {short_price}",
+        description=f"Отправить оффер на {price_display}",
+        thumbnail_url=data["thumb"],
+        input_message_content=InputTextMessageContent(
+            message_text=format_parsed_card(data, price_display),
+            parse_mode="HTML",
+            link_preview_options=preview_opts
+        ),
+        reply_markup=get_step1_kb()
+    )
+
+    await inline_query.answer([result], cache_time=1, is_personal=True)
 
 @dp.callback_query(F.data == "step2_accept")
 async def process_step2(callback: CallbackQuery):
