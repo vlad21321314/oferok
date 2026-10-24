@@ -416,21 +416,22 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True
     )
 
+    # 1. Сначала удаляем сообщение с командой
     if biz_conn_id:
         try:
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=message.message_id,
+            await bot.delete_business_messages(
                 business_connection_id=biz_conn_id,
-                text=format_parsed_card(data, price_display),
-                parse_mode="HTML",
-                link_preview_options=preview_opts,
-                reply_markup=get_step1_kb()
+                message_ids=[message.message_id]
             )
-            return
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Ошибка удаления бизнес-сообщения: {e}")
+    else:
+        try:
+            await message.delete()
+        except Exception as e:
+            print(f"Ошибка удаления сообщения: {e}")
 
+    # 2. Затем отправляем отредактированную карточку
     try:
         await bot.send_message(
             chat_id=message.chat.id,
@@ -440,13 +441,6 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        if biz_conn_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
-            )
-        else:
-            await message.delete()
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
