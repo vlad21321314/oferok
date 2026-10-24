@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+import html # <- Добавлен импорт для безопасного парсинга спецсимволов
 import aiohttp
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, F
@@ -21,7 +22,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Ваш Telegram ID (главный администратор)
-SUPER_ADMIN_IDS = [8975317102, 629408999]  
+SUPER_ADMIN_IDS = [8975317102, 629408999] 
 
 ALLOWED_FILE = "allowed_users.json"
 ALL_USERS_FILE = "all_users.json"
@@ -148,9 +149,10 @@ async def fetch_real_nft_data(slug: str) -> dict:
             async with session_http.get(url) as resp:
                 if resp.status != 200:
                     return fallback_data
-                html = await resp.text()
+                # Переименована переменная html чтобы избежать конфликта с модулем html
+                html_text = await resp.text()
 
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html_text, "html.parser")
         title_meta = soup.find("meta", property="og:title")
         image_meta = soup.find("meta", property="og:image")
         if not title_meta or title_meta.get("content") == "Telegram":
@@ -173,9 +175,13 @@ async def fetch_real_nft_data(slug: str) -> dict:
     except Exception:
         return fallback_data
 
+# =====================================================================
+# ИСПРАВЛЕНО ЗДЕСЬ: Экранируем HTML-теги в названии
+# =====================================================================
 def format_parsed_card(data: dict, price_display: str) -> str:
+    safe_name = html.escape(data['name'])
     return (
-        f"Пользователь предлагает Вам <b>{price_display}</b> за подарок <b><a href='{data['url']}'>{data['name']}</a></b>.\n\n"
+        f"Пользователь предлагает Вам <b>{price_display}</b> за подарок <b><a href='{data['url']}'>{safe_name}</a></b>.\n\n"
         f"Предложение действует ещё 6 ч. 0 мин.."
     )
 
@@ -402,7 +408,7 @@ async def process_broadcast(message: Message, state: FSMContext):
     )
 
 # =====================================================================
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ: СНАЧАЛА УДАЛЯЕТ КОМАНДУ /ar, ЗАТЕМ ШЛЕТ КАРТОЧКУ
+# ОТПРАВКА ОФФЕРА В ЧАТ
 # =====================================================================
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
@@ -420,7 +426,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
 
-    # 1. Мгновенно удаляем сообщение с командой /ar, чтобы не было видно команды и значка "изменено"
+    # Попытка удалить команду пользователя
     try:
         if biz_conn_id:
             await bot.delete_business_messages(
@@ -430,9 +436,8 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         else:
             await message.delete()
     except Exception as e:
-        print(f"Не удалось удалить исходную команду: {e}")
+        print(f"Не удалось удалить исходную команду (возможно нет прав): {e}")
 
-    # 2. Парсим данные подарка и отправляем совершенно новое чистое сообщение
     data = await fetch_real_nft_data(slug)
 
     preview_opts = LinkPreviewOptions(
@@ -463,7 +468,7 @@ async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
 
 # =====================================================================
-# ДОБАВЛЕН INLINE-РЕЖИМ (ЧТОБЫ ОТПРАВЛЯТЬ ВООБЩЕ БЕЗ КОМАНДЫ /ar В ЧАТЕ)
+# INLINE-РЕЖИМ БЕЗ КОМАНДЫ /ar
 # =====================================================================
 @dp.inline_query()
 async def handle_inline_ar(inline_query: InlineQuery):
