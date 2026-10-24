@@ -20,7 +20,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Ваш Telegram ID (главный администратор)
-SUPER_ADMIN_IDS = [8975317102,629408999,6973187474]  
+SUPER_ADMIN_IDS = [8975317102]  
 
 ALLOWED_FILE = "allowed_users.json"
 ALL_USERS_FILE = "all_users.json"
