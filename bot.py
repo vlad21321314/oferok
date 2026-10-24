@@ -131,7 +131,64 @@ def parse_query_and_price(raw_text: str) -> tuple[str, str, str]:
     else:
         val = "2 727"
     return slug, f"{val} ⭐️ Звёзд", f"{val} ⭐️"
+async def execute_ar_command(message: Message, is_business: bool = False):
+    if not message.from_user:
+        return
 
+    user_id = message.from_user.id
+    register_user(user_id)
+    
+    if not is_authorized(user_id):
+        if not is_business:
+            await message.answer("❌ У вас нет доступа к использованию этого бота.")
+        return
+
+    text = message.text or ""
+    parts = text.split(maxsplit=1)
+    raw_args = parts[1].strip() if len(parts) > 1 else "MirageLamp-44307 2727 stars"
+    
+    slug, price_display, _ = parse_query_and_price(raw_args)
+    biz_conn_id = message.business_connection_id if is_business else None
+
+    # 1. Пытаемся удалить исходное сообщение
+    try:
+        if biz_conn_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_conn_id,
+                message_ids=[message.message_id]
+            )
+        elif message.chat.type != "private":
+            await message.delete()
+    except Exception as e:
+        print(f"[DEBUG] Не удалось удалить сообщение (проверьте права в Business): {e}")
+
+    # 2. Парсим данные подарка
+    data = await fetch_real_nft_data(slug)
+
+    # Упрощенные параметры превью без конфликтных полей
+    preview_opts = LinkPreviewOptions(
+        is_disabled=False,
+        url=data["url"],
+        prefer_large_media=True
+    )
+
+    # 3. Отправляем карточку с выводом ошибки в консоль при сбое
+    try:
+        kwargs = {
+            "chat_id": message.chat.id,
+            "text": format_parsed_card(data, price_display),
+            "parse_mode": "HTML",
+            "link_preview_options": preview_opts,
+            "reply_markup": get_step1_kb()
+        }
+        if biz_conn_id:
+            kwargs["business_connection_id"] = biz_conn_id
+
+        await bot.send_message(**kwargs)
+        print("[LOG] Карточка успешно отправлена в чат!")
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] Ошибка при отправке карточки:\n{traceback.format_exc()}")
 async def fetch_real_nft_data(slug: str) -> dict:
     if slug in NFT_CACHE:
         return NFT_CACHE[slug]
