@@ -396,6 +396,7 @@ async def process_broadcast(message: Message, state: FSMContext):
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
     register_user(user_id)
+    
     if not is_authorized(user_id):
         await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
@@ -403,7 +404,6 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     text = message.text or ""
     args_text = text[3:].strip()
     raw_args = args_text or "MirageLamp-44307 2727 stars"
-
     
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
@@ -477,15 +477,11 @@ async def explain_continue_trap(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "decline_offer")
 async def process_decline(callback: CallbackQuery):
-    declined_text = "❌ <b>Предложение отклонено</b>"
+    declined_text = "❌ <b>Предложение отклонено владельцем</b>"
     if callback.message:
         await callback.message.edit_text(text=declined_text, parse_mode="HTML")
     elif callback.inline_message_id:
-        await bot.edit_message_text(
-            inline_message_id=callback.inline_message_id,
-            text=declined_text,
-            parse_mode="HTML"
-        )
+        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
     await callback.answer("Оффер отклонен")
 
 async def main():
