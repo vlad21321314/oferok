@@ -381,14 +381,14 @@ async def process_broadcast(message: Message, state: FSMContext):
         try:
             await bot.send_message(uid, broadcast_text, parse_mode="HTML")
             success += 1
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(0.1)
         except Exception:
             fail += 1
             
     await status_msg.edit_text(
         f"📢 <b>Рассылка завершена!</b>\n\n"
         f"✅ Успешно доставлено: <b>{success}</b>\n"
-        f"❌ Ошибок (заблокировали бота): <b>{fail}</b>",
+        f"❌ Ошибок: <b>{fail}</b>",
         parse_mode="HTML"
     )
 
@@ -415,7 +415,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     )
 
     try:
-        # Пытаемся отправить карточку с кнопками от имени бизнеса
+        # Отправляем карточку оффера в чат без спама ошибок внутрь переписки
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
@@ -425,15 +425,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             reply_markup=get_step1_kb()
         )
     except Exception as e:
-        # Если Telegram отклоняет отправку, выводим ошибку прямо в чат для отладки
-        try:
-            await bot.send_message(
-                chat_id=message.chat.id,
-                business_connection_id=biz_conn_id,
-                text=f"❌ Ошибка отправки карточки ботом: {e}"
-            )
-        except Exception:
-            print(f"Критическая ошибка отправки: {e}")
+        print(f"Ошибка отправки карточки: {e}")
 
 @dp.message(F.text.startswith("/ar"))
 async def handle_regular_ar(message: Message):
@@ -466,7 +458,7 @@ async def process_decline(callback: CallbackQuery):
     if callback.message:
         await callback.message.edit_text(text=declined_text, parse_mode="HTML")
     elif callback.inline_message_id:
-        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
+        await bot.edit_message_id(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
     await callback.answer("Оффер отклонен")
 
 async def main():
