@@ -424,12 +424,15 @@ async def execute_ar_command(message: Message, is_business: bool = False):
                 message_ids=[message.message_id]
             )
         except Exception as e:
-            print(f"❌ Ошибка удаления (проверьте права в BotFather): {e}")
+            print(f"❌ Ошибка удаления бизнес-сообщения: {e}")
     else:
         try:
             await message.delete()
         except Exception as e:
             print(f"❌ Ошибка удаления: {e}")
+
+    # Небольшая пауза, чтобы Telegram успел удалить старое сообщение
+    await asyncio.sleep(0.2)
 
     # 2. ОТПРАВЛЯЕМ КАРТОЧКУ ЗАНОВО
     try:
@@ -441,7 +444,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        print("✅ Карточка отправлена заново")
+        print("✅ Карточка успешно отправлена!")
     except Exception as e:
         print(f"❌ Ошибка отправки карточки: {e}")
 
