@@ -395,7 +395,7 @@ async def process_broadcast(message: Message, state: FSMContext):
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
     register_user(user_id)
-    
+
     if not is_authorized(user_id):
         await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
@@ -403,49 +403,66 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     text = message.text or ""
     args_text = text[3:].strip()
     raw_args = args_text or "MirageLamp-44307 2727 stars"
-    
+
     slug, price_display, _ = parse_query_and_price(raw_args)
+
+    # ВАЖНО: для бизнес-чата business_connection_id обязателен.
+    # Если его нет — работаем как с обычным чатом, иначе получим рассинхрон
+    # (отправим в одно место, удалять будем в другом).
     biz_conn_id = message.business_connection_id if is_business else None
-    data = await fetch_real_nft_data(slug)
+    if is_business and not biz_conn_id:
+        print(
+            f"[AR] ВНИМАНИЕ: is_business=True, но business_connection_id=None "
+            f"(user={user_id}, chat={message.chat.id}). Работаем как обычный чат."
+        )
+
+    try:
+        data = await fetch_real_nft_data(slug)
+    except Exception as e:
+        print(f"[AR][fetch] {type(e).__name__}: {e}")
+        await message.answer("⚠️ Не удалось получить данные по офферу, попробуйте позже.")
+        return
 
     preview_opts = LinkPreviewOptions(
         is_disabled=False,
         prefer_large_media=True,
-        show_above_text=True
+        show_above_text=True,
     )
 
+    # 1. Отправляем карточку. Если отправка упала — НЕ удаляем /ar,
+    # иначе пользователь останется без карточки и без команды.
     try:
-        # 1. Отправляем карточку оффера с кнопками
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
             text=format_parsed_card(data, price_display),
             parse_mode="HTML",
             link_preview_options=preview_opts,
-            reply_markup=get_step1_kb()
+            reply_markup=get_step1_kb(),
         )
-        
-        # 2. Удаляем исходное сообщение с командой /ar
-        if biz_conn_id:
-            try:
-                await bot.delete_business_messages(
-                    business_connection_id=biz_conn_id,
-                    message_ids=[message.message_id]
-                )
-            except Exception as del_err:
-                print(f"Не удалось удалить бизнес-сообщение: {del_err}")
-        else:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-                
     except Exception as e:
-        print(f"Ошибка отправки карточки: {e}")
-@dp.message(F.text.startswith("/ar"))
-async def handle_regular_ar(message: Message):
-    await execute_ar_command(message, is_business=False)
+        print(f"[AR][send] {type(e).__name__}: {e}")
+        return
 
+    # 2. Удаляем исходное сообщение с /ar
+    if biz_conn_id:
+        try:
+            await bot.delete_business_messages(
+                business_connection_id=biz_conn_id,
+                message_ids=[message.message_id],
+            )
+        except Exception as e:
+            # Самое частое здесь: not enough rights → владелец бизнеса
+            # не выдал боту can_delete_messages. Лечится переподключением
+            # бота с включённой галочкой «Delete messages».
+            print(f"[AR][del business] {type(e).__name__}: {e}")
+    else:
+        try:
+            await message.delete()
+        except Exception as e:
+            # Частое: message to delete not found (уже удалено другим
+            # хендлером) или message can't be deleted (старше 48ч).
+            print(f"[AR][del private] {type(e).__name__}: {e}")
 @dp.business_message(F.text.startswith("/ar"))
 async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
