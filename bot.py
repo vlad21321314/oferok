@@ -396,7 +396,6 @@ async def process_broadcast(message: Message, state: FSMContext):
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
     register_user(user_id)
-    
     if not is_authorized(user_id):
         await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
@@ -404,6 +403,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     text = message.text or ""
     args_text = text[3:].strip()
     raw_args = args_text or "MirageLamp-44307 2727 stars"
+
     
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
@@ -416,54 +416,37 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True
     )
 
-    card_text = format_parsed_card(data, price_display)
-
     if biz_conn_id:
-        # 1. Удаляем исходное сообщение с командой /ar
         try:
-            await bot.delete_business_messages(
-                business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
-            )
-        except Exception as e:
-            print(f"Ошибка удаления команды: {e}")
-
-        # 2. Отправляем красивую карточку
-        # Владелец увидит карточку С КНОПКАМИ, собеседник - БЕЗ КНОПОК (ограничение Telegram)
-        try:
-            await bot.send_message(
+            await bot.edit_message_text(
                 chat_id=message.chat.id,
+                message_id=message.message_id,
                 business_connection_id=biz_conn_id,
-                text=card_text,
+                text=format_parsed_card(data, price_display),
                 parse_mode="HTML",
                 link_preview_options=preview_opts,
                 reply_markup=get_step1_kb()
             )
-        except Exception as e:
-            print(f"Ошибка отправки карточки: {e}")
+            return
+        except Exception:
+            pass
 
-        # 3. Отправляем кнопки напрямую от бота, чтобы СОБЕСЕДНИК их увидел
-        try:
-            await bot.send_message(
-                chat_id=message.chat.id, 
-                text="\u200b", # Невидимый символ, чтобы сообщение отправилось
-                reply_markup=get_step1_kb()
-            )
-        except Exception as e:
-            print(f"❌ НЕ УДАЛОСЬ ОТПРАВИТЬ КНОПКИ КЛИЕНТУ. Причина: {e}")
-            
-        return
-
-    # Обычный режим (не бизнес)
     try:
         await bot.send_message(
             chat_id=message.chat.id,
-            text=card_text,
+            business_connection_id=biz_conn_id,
+            text=format_parsed_card(data, price_display),
             parse_mode="HTML",
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        await message.delete()
+        if biz_conn_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_conn_id,
+                message_ids=[message.message_id]
+            )
+        else:
+            await message.delete()
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
