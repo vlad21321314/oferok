@@ -400,26 +400,17 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
 
+    # Более безопасный способ убрать /ar из текста
     text = message.text or ""
-    args_text = text[3:].strip()
+    args_text = re.sub(r'^/ar(@\w+)?\s*', '', text, flags=re.IGNORECASE).strip()
     raw_args = args_text or "MirageLamp-44307 2727 stars"
 
     slug, price_display, _ = parse_query_and_price(raw_args)
-
-    # ВАЖНО: для бизнес-чата business_connection_id обязателен.
-    # Если его нет — работаем как с обычным чатом, иначе получим рассинхрон
-    # (отправим в одно место, удалять будем в другом).
     biz_conn_id = message.business_connection_id if is_business else None
-    if is_business and not biz_conn_id:
-        print(
-            f"[AR] ВНИМАНИЕ: is_business=True, но business_connection_id=None "
-            f"(user={user_id}, chat={message.chat.id}). Работаем как обычный чат."
-        )
 
     try:
         data = await fetch_real_nft_data(slug)
     except Exception as e:
-        print(f"[AR][fetch] {type(e).__name__}: {e}")
         await message.answer("⚠️ Не удалось получить данные по офферу, попробуйте позже.")
         return
 
@@ -429,8 +420,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True,
     )
 
-    # 1. Отправляем карточку. Если отправка упала — НЕ удаляем /ar,
-    # иначе пользователь останется без карточки и без команды.
+    # 1. Отправляем карточку.
     try:
         await bot.send_message(
             chat_id=message.chat.id,
@@ -441,10 +431,13 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             reply_markup=get_step1_kb(),
         )
     except Exception as e:
-        print(f"[AR][send] {type(e).__name__}: {e}")
+        await message.answer(f"⚠️ Ошибка отправки карточки: {e}")
         return
 
-    # 2. Удаляем исходное сообщение с /ar
+    # 2. Пауза для прогрузки карточки
+    await asyncio.sleep(0.5)
+
+    # 3. Удаление команды /ar
     if biz_conn_id:
         try:
             await bot.delete_business_messages(
@@ -452,20 +445,34 @@ async def execute_ar_command(message: Message, is_business: bool = False):
                 message_ids=[message.message_id],
             )
         except Exception as e:
-            # Самое частое здесь: not enough rights → владелец бизнеса
-            # не выдал боту can_delete_messages. Лечится переподключением
-            # бота с включённой галочкой «Delete messages».
-            print(f"[AR][del business] {type(e).__name__}: {e}")
+            # Если удалить не удалось — бот пишет об этом в чат!
+            await message.answer(
+                f"⚠️ <b>Не удалось удалить команду /ar!</b>\n\n"
+                f"Причина: <code>{e}</code>\n\n"
+                f"👉 <i>Чтобы бот мог удалять сообщения в Business-аккаунте, "
+                f"зайдите в Настройки -> Telegram Business -> Чат-боты -> Ваш бот "
+                f"и включите галочку «Удаление сообщений» (Delete messages).</i>",
+                parse_mode="HTML"
+            )
     else:
         try:
             await message.delete()
         except Exception as e:
-            # Частое: message to delete not found (уже удалено другим
-            # хендлером) или message can't be deleted (старше 48ч).
-            print(f"[AR][del private] {type(e).__name__}: {e}")
-@dp.business_message(F.text.startswith("/ar"))
+            await message.answer(
+                f"⚠️ Не удалось удалить команду /ar.\n"
+                f"Причина: <code>{e}</code>",
+                parse_mode="HTML"
+            )
+
+# Обработчик для Бизнес-аккаунтов
+@dp.business_message(F.text.regexp(r'^/ar(@\w+)?(\s|$)'))
 async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
+
+# Обработчик для Обычных чатов
+@dp.message(F.text.regexp(r'^/ar(@\w+)?(\s|$)'))
+async def handle_regular_ar(message: Message):
+    await execute_ar_command(message, is_business=False)
 
 @dp.callback_query(F.data == "step2_accept")
 async def process_step2(callback: CallbackQuery):
