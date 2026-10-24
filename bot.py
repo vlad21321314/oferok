@@ -416,7 +416,25 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True
     )
 
-    # 1. Сначала удаляем сообщение с командой
+    # --- ПОПЫТКА 1: Мгновенно отредактировать сообщение (самый лучший способ) ---
+    if biz_conn_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                business_connection_id=biz_conn_id,
+                text=format_parsed_card(data, price_display),
+                parse_mode="HTML",
+                link_preview_options=preview_opts,
+                reply_markup=get_step1_kb()
+            )
+            return # Если получилось отредактировать, выходим
+        except Exception as e:
+            print(f"Не удалось отредактировать: {e}. Пробуем удалить и отправить.")
+
+    # --- ПОПЫТКА 2: Сначала удаляем, потом отправляем (если редактирование недоступно) ---
+    
+    # 1. Удаление
     if biz_conn_id:
         try:
             await bot.delete_business_messages(
@@ -429,9 +447,9 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         try:
             await message.delete()
         except Exception as e:
-            print(f"Ошибка удаления сообщения: {e}")
+            print(f"Ошибка удаления: {e}")
 
-    # 2. Затем отправляем отредактированную карточку
+    # 2. Отправка новой карточки
     try:
         await bot.send_message(
             chat_id=message.chat.id,
