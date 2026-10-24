@@ -416,22 +416,8 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True
     )
 
-    if biz_conn_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=message.message_id,
-                business_connection_id=biz_conn_id,
-                text=format_parsed_card(data, price_display),
-                parse_mode="HTML",
-                link_preview_options=preview_opts,
-                reply_markup=get_step1_kb()
-            )
-            return
-        except Exception:
-            pass
-
     try:
+        # Всегда отправляем новое сообщение с кнопками, чтобы собеседник их видел
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
@@ -440,6 +426,8 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
+        
+        # Удаляем сообщение с командой /ar
         if biz_conn_id:
             await bot.delete_business_messages(
                 business_connection_id=biz_conn_id,
@@ -447,6 +435,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             )
         else:
             await message.delete()
+            
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
