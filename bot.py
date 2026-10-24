@@ -415,7 +415,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     )
 
     try:
-        # Отправляем карточку оффера в чат без спама ошибок внутрь переписки
+        # 1. Отправляем карточку оффера с кнопками
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
@@ -424,9 +424,24 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
+        
+        # 2. Удаляем исходное сообщение с командой /ar
+        if biz_conn_id:
+            try:
+                await bot.delete_business_messages(
+                    business_connection_id=biz_conn_id,
+                    message_ids=[message.message_id]
+                )
+            except Exception as del_err:
+                print(f"Не удалось удалить бизнес-сообщение: {del_err}")
+        else:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+                
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
-
 @dp.message(F.text.startswith("/ar"))
 async def handle_regular_ar(message: Message):
     await execute_ar_command(message, is_business=False)
