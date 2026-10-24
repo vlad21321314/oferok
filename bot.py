@@ -419,39 +419,42 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     card_text = format_parsed_card(data, price_display)
 
     if biz_conn_id:
-        # 1. Отправляем НОВОЕ сообщение с карточкой (без кнопок)
-        # Теперь собеседник 100% увидит красивую карточку, а не команду
+        # 1. Удаляем исходное сообщение с командой /ar
+        try:
+            await bot.delete_business_messages(
+                business_connection_id=biz_conn_id,
+                message_ids=[message.message_id]
+            )
+        except Exception as e:
+            print(f"Ошибка удаления команды: {e}")
+
+        # 2. Отправляем красивую карточку
+        # Владелец увидит карточку С КНОПКАМИ, собеседник - БЕЗ КНОПОК (ограничение Telegram)
         try:
             await bot.send_message(
                 chat_id=message.chat.id,
                 business_connection_id=biz_conn_id,
                 text=card_text,
                 parse_mode="HTML",
-                link_preview_options=preview_opts
-            )
-            # 2. Удаляем исходную команду /ar, чтобы чат не засорялся
-            await bot.delete_business_messages(
-                business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
-            )
-        except Exception as e:
-            print(f"Ошибка отправки карточки в бизнес-чате: {e}")
-
-        # 3. Отправляем ОТДЕЛЬНОЕ сообщение с кнопками напрямую от бота собеседнику
-        try:
-            await bot.send_message(
-                chat_id=message.chat.id, # В бизнес-чате это ID собеседника
-                text="👇 <b>Пожалуйста, выберите действие по офферу:</b>",
-                parse_mode="HTML",
+                link_preview_options=preview_opts,
                 reply_markup=get_step1_kb()
             )
         except Exception as e:
-            # Если ошибка 403 - собеседник не нажимал /start у бота
+            print(f"Ошибка отправки карточки: {e}")
+
+        # 3. Отправляем кнопки напрямую от бота, чтобы СОБЕСЕДНИК их увидел
+        try:
+            await bot.send_message(
+                chat_id=message.chat.id, 
+                text="\u200b", # Невидимый символ, чтобы сообщение отправилось
+                reply_markup=get_step1_kb()
+            )
+        except Exception as e:
             print(f"❌ НЕ УДАЛОСЬ ОТПРАВИТЬ КНОПКИ КЛИЕНТУ. Причина: {e}")
             
         return
 
-    # Обычный режим (не бизнес, работает как раньше)
+    # Обычный режим (не бизнес)
     try:
         await bot.send_message(
             chat_id=message.chat.id,
