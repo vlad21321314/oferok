@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 # Токен вашего бота
-BOT_TOKEN = "8893848950:AAFsUUybra97f2jiuNuFQlBsAQsrLpTtNdk"
+BOT_TOKEN = "8983992347:AAHK7oQH8rA5rgYblvnUktThq8ODbV-F1iM"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -416,25 +416,21 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True
     )
 
-    # 1. УДАЛЯЕМ СООБЩЕНИЕ С КОМАНДОЙ
     if biz_conn_id:
         try:
-            await bot.delete_business_messages(
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
                 business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
+                text=format_parsed_card(data, price_display),
+                parse_mode="HTML",
+                link_preview_options=preview_opts,
+                reply_markup=get_step1_kb()
             )
-        except Exception as e:
-            print(f"❌ Ошибка удаления бизнес-сообщения: {e}")
-    else:
-        try:
-            await message.delete()
-        except Exception as e:
-            print(f"❌ Ошибка удаления: {e}")
+            return
+        except Exception:
+            pass
 
-    # Небольшая пауза, чтобы Telegram успел удалить старое сообщение
-    await asyncio.sleep(0.2)
-
-    # 2. ОТПРАВЛЯЕМ КАРТОЧКУ ЗАНОВО
     try:
         await bot.send_message(
             chat_id=message.chat.id,
@@ -444,9 +440,15 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        print("✅ Карточка успешно отправлена!")
+        if biz_conn_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_conn_id,
+                message_ids=[message.message_id]
+            )
+        else:
+            await message.delete()
     except Exception as e:
-        print(f"❌ Ошибка отправки карточки: {e}")
+        print(f"Ошибка отправки карточки: {e}")
 
 @dp.message(F.text.startswith("/ar"))
 async def handle_regular_ar(message: Message):
