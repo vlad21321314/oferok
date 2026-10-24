@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 # Токен вашего бота
-BOT_TOKEN = "8893848950:AAFsUUybra97f2jiuNuFQlBsAQsrLpTtNdk"
+BOT_TOKEN = "8983992347:AAHK7oQH8rA5rgYblvnUktThq8ODbV-F1iM"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -45,7 +45,6 @@ def save_json_set(filename: str, data: set):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(list(data), f)
 
-# Управление конфигом (ссылкой для передачи NFT)
 def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         try:
@@ -416,7 +415,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     )
 
     try:
-        # Отправляем карточку оффера в чат
+        # Пытаемся отправить карточку с кнопками от имени бизнеса
         await bot.send_message(
             chat_id=message.chat.id,
             business_connection_id=biz_conn_id,
@@ -426,7 +425,15 @@ async def execute_ar_command(message: Message, is_business: bool = False):
             reply_markup=get_step1_kb()
         )
     except Exception as e:
-        print(f"Ошибка отправки карточки: {e}")
+        # Если Telegram отклоняет отправку, выводим ошибку прямо в чат для отладки
+        try:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                business_connection_id=biz_conn_id,
+                text=f"❌ Ошибка отправки карточки ботом: {e}"
+            )
+        except Exception:
+            print(f"Критическая ошибка отправки: {e}")
 
 @dp.message(F.text.startswith("/ar"))
 async def handle_regular_ar(message: Message):
