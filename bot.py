@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 
 # Токен вашего бота
-BOT_TOKEN = "8951594835:AAGydu4QFh_yTWRxhFjW5WP6A2QrdjCW-2A"
+BOT_TOKEN = "8907917121:AAH-ceWW-nbtLy6vIn9yqp5sNogxCIis7r0"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
